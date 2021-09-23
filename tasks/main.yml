@@ -1,6 +1,115 @@
----
-# tasks file for aws_access
+ ---
+        - name: Create VPC
+          ec2_vpc_net:
+           name:             "{{ vpc_name }}"
+           cidr_block:       "{{ vpc_cidr }}"
+           region:           "{{ region }}"
+           state:            "present"
+           aws-access_key:   "{{ aws_access_key }}"
+           aws_secret_key:   "{{ aws_secret_key }}"
+          register: my_vpc
 
- - import_tasks: vpc.yml
- - import_tasks: security_group.yml
- - import_tasks: create_ec2.yml
+        - name: Set VPC ID in variable
+          set_fact:
+            vpc_id:           "{{ my_vpc.vpc.id }}"
+
+
+        - name: Create Public Subnet
+          ec2_vpc_subnet:
+           state:            "present"
+           vpc_id:           "{{ vpc_id }}"
+           cidr:             "{{ pub_subnet_1_cidr }}"
+           aws-access_key:   "{{ aws_access_key }}"
+           aws_secret_key:   "{{ aws_secret_key }}"
+           az:               "{{ region }}a"
+           region:           "{{ region }}"
+           resource_tags:
+             Name:           "{{subnet_name1}}"
+          register: my_public_subnet
+  
+        - name: Set Public Subnet ID in variable
+          set_fact:
+            public_subnet_id: "{{ my_public_subnet.subnet.id }}"
+
+        - name: Create Internet Gateway for VPC
+          ec2_vpc_igw:
+            vpc_id:           "{{ vpc_id }}"
+            region:           "{{ region }}"
+            aws-access_key:   "{{ aws_access_key }}"
+            aws_secret_key:   "{{ aws_secret_key }}"
+            state:            "present"
+            resource_tags:
+              Name:           "{{igw_name}}"
+          register: my_vpc_igw
+
+        - name:               Set Internet Gateway ID in variable
+          set_fact:
+           igw_id:           "{{ my_vpc_igw.gateway_id }}"
+
+
+        - name:               Set up public subnet route table
+          ec2_vpc_route_table:
+           vpc_id:           "{{ vpc_id }}"
+           region:           "{{ region }}"
+           aws-access_key:   "{{ aws_access_key }}"
+           aws_secret_key:   "{{ aws_secret_key }}"
+           tags:
+            Name:           "Ansible_Public"
+           subnets:
+            - "{{ public_subnet_id }}"
+           routes:
+            - dest:         "0.0.0.0/0"
+              gateway_id:   "{{ igw_id }}"
+
+
+
+         - name:               Create Main Security Group
+           ec2_group:
+           name:             "My Security Group"
+           description:      "My Security Group"
+           vpc_id:           "{{ vpc_id }}"
+           region:           "{{ region }}"
+           aws-access_key:   "{{ aws_access_key }}"
+           aws_secret_key:   "{{ aws_secret_key }}"
+           rules:
+              - proto:        "tcp"
+                from_port:    "22"
+                to_port:      "22"
+                cidr_ip:      "0.0.0.0/0"
+           register: security_group  
+      
+      
+         - name: create a new ec2 key pair ,returns generated key
+          ec2_key:
+             aws-access_key:   "{{ aws_access_key }}"
+             aws_secret_key:   "{{ aws_secret_key }}" 
+             name: "{{keypair_name}}"
+             region: "{{ region }}"
+          register: keypair
+          tags:
+              - development-key
+      
+         - name: copy EC2 keypair private key locally
+           copy: content="{{ keypair.key.private-key }}" dest={{ ec2-key_directory}}development.pem 
+           when: keypair.changed== true
+           tags:
+                -development-key   
+
+
+
+         - name: Create EC2 server
+           ec2:                           
+           image: "{{image_name}}"
+           wait: yes
+           instance_type: "{{instance_type}}"
+           region: "{{ region }}"
+           group_id: "{{ security_group.group_id }}"
+           vpc_subnet_id: "{{ my_public_subnet.subnet.id }}"
+           assign_public_ip: yes
+           key_name: "{{ keypair.key.name }}"
+           instance_tags: 
+                Name: development
+           aws-access_key:   "{{ aws_access_key }}"
+           aws_secret_key:   "{{ aws_secret_key }}" 
+
+
